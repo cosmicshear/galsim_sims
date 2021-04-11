@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import scipy
 from scipy.integrate import quad
@@ -8,6 +9,8 @@ import pandas as pd
 from scipy.interpolate import interp1d
 # from mpmath import gammainc
 
+absdir = os.path.dirname(os.path.abspath(__file__))
+
 class HLRShearModel:
     """ fully vectorized - blazing fast
     ... > hsm = HLRShearModel('hlrshear.csv')
@@ -15,7 +18,7 @@ class HLRShearModel:
     magnify=True corresponds to galsim.lens() 
     magnify=False corresponds to galsim.shear() 
     """
-    def __init__(self,training_file='hlrshear.csv',magnify=None):
+    def __init__(self,training_file=f'{absdir}/hlrshear.csv',magnify=None):
         # training_file should be csv
         # it has the sheared hlr of initially round shape with hlr=1.0 given ellipticity
         # ------------
