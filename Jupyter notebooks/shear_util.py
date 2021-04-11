@@ -26,7 +26,7 @@ class HLRShearModel:
         self.df_train = pd.read_csv(self.training_file)
         
     def train(self,ref,magnify):
-        # on: 'scale_analytic', 'scale_galsim', 'scale_analytic_magnified', 'scale_galsim_magnified' 
+        # ref: 'analytic', 'galsim'
         self.magnify = magnify
         colname = f'scale_{ref}'
         if self.magnify:
