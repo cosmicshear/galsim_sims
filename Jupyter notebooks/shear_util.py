@@ -210,15 +210,16 @@ def get_shape_covmat(hlr_postshear,e1,e2,out_unit='arcsec'):
     Q = sersic_second_moments(hlr_preshear,e1,e2,magnify=magnify,out_unit=out_unit) # both gaussian_second_moments and sersic_second_moment with n=0.5 work
     return Q
 
-def get_shape_covmat_fast(hlr_postshear,e1,e2,out_unit='arcsec'):
+def get_shape_covmat_fast(hlr_postshear,e1,e2,hsm=HLRShearModel(),out_unit='arcsec'):
     ''' returns the actual second moments tensor that describes the shape given the
     current ellipticity and hlr. It uses interpolation on pre-computd data to increase
     efficiency while vectorizing the function.
+    Note: if you invoke this function multiple times and don't want to train the model every time,
+          you can execute hsm=HLRShearModel() once and pass the hsm class object to this function.
     '''
     # assumes hlr_postshear in arcsec
     magnify = False # magnify=True or False doesn't change the outcome it just needs to be consistent throughout this function
     e = np.sqrt(e1**2+e2**2)
-    hsm = HLRShearModel()
     hlr_preshear = hsm.get_hlr_preshear(hlr_postshear, e, magnify=magnify)
     Q = gaussian_second_moments(hlr_preshear,e1,e2,magnify=magnify,out_unit=out_unit) # both gaussian_second_moments and sersic_second_moment with n=0.5 work
     return Q
@@ -325,7 +326,7 @@ def hlr_absdiff_with_sigmas(hlr_in,sigma_x,sigma_y): # just to generate training
 
 def get_hlr_preshear(hlr_postshear, e, magnify=False): # just to generate training data for the shear model; later you should use the fast approach of hsm.get_hlr_preshear()
     ''' NOTE: hlr_postshear can't be an array because this function is not vectorized; use np.vectorize() or list comprehension if desired '''
-    if e==0:
+    if isinstance(e, (int, float)) and e==0:
         return hlr_postshear
     else:
         # A very good approximation for the initial guess using the Wilson-Hilferty transformation
@@ -338,17 +339,16 @@ def get_hlr_preshear(hlr_postshear, e, magnify=False): # just to generate traini
         # res = minimize(hlr_absdiff, hlr_init, args=(hlr_postshear, e, magnify), method='Nelder-Mead', tol=1e-18)
         return res #res.x[0]
 
-def get_hlr_preshear_fast(hlr_postshear, e, magnify=False):
+def get_hlr_preshear_fast(hlr_postshear, e, hsm=HLRShearModel(), magnify=False):
     ''' vectorized and efficient based on pre-computed interpolated data '''
-    if e==0:
+    if isinstance(e, (int, float)) and e==0:
         return hlr_postshear
     else:
-        hsm = HLRShearModel()
         return hsm.get_hlr_preshear(hlr_postshear, e, magnify)
 
 def get_hlr_postshear(hlr_preshear, e, magnify=False): # just to generate training data for the shear model; later you should use the fast approach of hsm.get_hlr_postshear()
     ''' NOTE: hlr_preshear can't be an array because this function is not vectorized; use np.vectorize() or list comprehension if desired '''
-    if e==0:
+    if isinstance(e, (int, float)) and e==0:
         return hlr_preshear
     else:
         # A very good approximation for the initial guess using the Wilson-Hilferty transformation
@@ -361,12 +361,11 @@ def get_hlr_postshear(hlr_preshear, e, magnify=False): # just to generate traini
         # res = minimize(hlr_absdiff, hlr_init, args=(hlr_preshear, e, magnify), method='Nelder-Mead', tol=1e-18)
         return res #res.x[0]
 
-def get_hlr_postshear_fast(hlr_preshear, e, magnify=False):
+def get_hlr_postshear_fast(hlr_preshear, e, hsm=HLRShearModel(), magnify=False):
     ''' vectorized and efficient based on pre-computed interpolated data '''
-    if e==0:
+    if isinstance(e, (int, float)) and e==0:
         return hlr_preshear
     else:
-        hsm = HLRShearModel()
         return hsm.get_hlr_preshear(hlr_preshear, e, magnify)
 
 def calc_moment_radius(Q, method='det'):
@@ -427,7 +426,7 @@ def hlr_from_moments(Q):
     res = minimize(hlr_absdiff_with_sigmas, hlr_wh, args=(sigma_x, sigma_y), method='Nelder-Mead', tol=1e-15)
     return res.x[0]
 
-def hlr_from_moments_fast(Q, return_shape=False):
+def hlr_from_moments_fast(Q, hsm=HLRShearModel(), return_shape=False):
     # vectorized!
     # It uses interpolation on pre-computed data with high precission
     # recommended over `hlr_from_moments()`
@@ -437,7 +436,6 @@ def hlr_from_moments_fast(Q, return_shape=False):
     sigma_round = calc_moment_radius(Q)
     hlr_round = sigma_round*np.sqrt(np.log(4))
     e1, e2, e = shape_from_moments(Q)
-    hsm = HLRShearModel()
     hlr_interp = hsm.get_hlr_postshear(hlr_round,e,magnify=False)
     if return_shape:
         return hlr_interp, e1, e2
