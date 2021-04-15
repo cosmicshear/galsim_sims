@@ -324,49 +324,48 @@ def hlr_absdiff_with_sigmas(hlr_in,sigma_x,sigma_y): # just to generate training
     enclosed_flux_frac = prob_bivariate_gaussian(0, hlr_in, sigma_x, sigma_y)
     return np.abs(enclosed_flux_frac-0.5) # 0.5 for hlr!
 
-def get_hlr_preshear(hlr_postshear, e, magnify=False): # just to generate training data for the shear model; later you should use the fast approach of hsm.get_hlr_preshear()
+def get_hlr_preshear(hlr_postshear, e, magnify=False, method='Nelder-Mead'): # just to generate training data for the shear model; later you should use the fast approach of hsm.get_hlr_preshear()
     ''' NOTE: hlr_postshear can't be an array because this function is not vectorized; use np.vectorize() or list comprehension if desired '''
-    if isinstance(e, (int, float)) and e==0:
-        return hlr_postshear
-    else:
-        # A very good approximation for the initial guess using the Wilson-Hilferty transformation
-        # eq. 18 of https://apps.dtic.mil/dtic/tr/fulltext/u2/1043284.pdf
-        # hlr_wh = np.sqrt( (sigma_x**2+sigma_y**2)*(1-2*(sigma_x**4+sigma_y**4)/9/(sigma_x**2+sigma_y**2)**2)**3 )
-        # let's use a less accurate approximation that only takes e: hlr/(1-e**2) w/ magnification; hlr/(1-e**2)**0.5 w/o magnification
-        hlr_guess = hlr_postshear*(1-e**2) if magnify else hlr_postshear*(1-e**2)**0.5 # magnification: mu = 1/(1-e**2)
+    # A very good approximation for the initial guess using the Wilson-Hilferty transformation
+    # eq. 18 of https://apps.dtic.mil/dtic/tr/fulltext/u2/1043284.pdf
+    # hlr_wh = np.sqrt( (sigma_x**2+sigma_y**2)*(1-2*(sigma_x**4+sigma_y**4)/9/(sigma_x**2+sigma_y**2)**2)**3 )
+    # let's use a less accurate approximation that only takes e: hlr/(1-e**2) w/ magnification; hlr/(1-e**2)**0.5 w/o magnification
+    hlr_guess = hlr_postshear*(1-e**2) if magnify else hlr_postshear*(1-e**2)**0.5 # magnification: mu = 1/(1-e**2)
+    if method=='Newton':
+        raise NotImplementedError('get_hlr_preshear() does not support the `newton` method yet. TODO for completeness. Please use the `Nelder-Mead` method.')
         res = scipy.optimize.newton(lambda x: hlr_diff(x,hlr_postshear,e,magnify), hlr_guess,
                                     fprime=lambda x: hlr_diff_derivative(x,hlr_postshear,e,magnify))
-        # res = minimize(hlr_absdiff, hlr_init, args=(hlr_postshear, e, magnify), method='Nelder-Mead', tol=1e-18)
-        return res #res.x[0]
+        return res
+    elif method=='Nelder-Mead': # for some reason only this works for this function not newton
+        res = minimize(hlr_absdiff, hlr_guess, args=(hlr_postshear, e, magnify), method='Nelder-Mead', tol=1e-18)
+        return res.x[0]
+    else:
+        raise RuntimeError('Invalid method')
 
 def get_hlr_preshear_fast(hlr_postshear, e, hsm=HLRShearModel(), magnify=False):
     ''' vectorized and efficient based on pre-computed interpolated data '''
-    if isinstance(e, (int, float)) and e==0:
-        return hlr_postshear
-    else:
-        return hsm.get_hlr_preshear(hlr_postshear, e, magnify)
+    return hsm.get_hlr_preshear(hlr_postshear, e, magnify)
 
-def get_hlr_postshear(hlr_preshear, e, magnify=False): # just to generate training data for the shear model; later you should use the fast approach of hsm.get_hlr_postshear()
+def get_hlr_postshear(hlr_preshear, e, magnify=False, method='Newton'): # just to generate training data for the shear model; later you should use the fast approach of hsm.get_hlr_postshear()
     ''' NOTE: hlr_preshear can't be an array because this function is not vectorized; use np.vectorize() or list comprehension if desired '''
-    if isinstance(e, (int, float)) and e==0:
-        return hlr_preshear
-    else:
-        # A very good approximation for the initial guess using the Wilson-Hilferty transformation
-        # eq. 18 of https://apps.dtic.mil/dtic/tr/fulltext/u2/1043284.pdf
-        # hlr_wh = np.sqrt( (sigma_x**2+sigma_y**2)*(1-2*(sigma_x**4+sigma_y**4)/9/(sigma_x**2+sigma_y**2)**2)**3 )
-        # let's use a less accurate approximation that only takes e: hlr/(1-e**2) w/ magnification; hlr/(1-e**2)**0.5 w/o magnification
-        hlr_guess = hlr_preshear/(1-e**2) if magnify else hlr_preshear/(1-e**2)**0.5 # magnification: mu = 1/(1-e**2)
+    # A very good approximation for the initial guess using the Wilson-Hilferty transformation
+    # eq. 18 of https://apps.dtic.mil/dtic/tr/fulltext/u2/1043284.pdf
+    # hlr_wh = np.sqrt( (sigma_x**2+sigma_y**2)*(1-2*(sigma_x**4+sigma_y**4)/9/(sigma_x**2+sigma_y**2)**2)**3 )
+    # let's use a less accurate approximation that only takes e: hlr/(1-e**2) w/ magnification; hlr/(1-e**2)**0.5 w/o magnification
+    hlr_guess = hlr_preshear/(1-e**2) if magnify else hlr_preshear/(1-e**2)**0.5 # magnification: mu = 1/(1-e**2)
+    if method=='Newton':
         res = scipy.optimize.newton(lambda x: hlr_diff(hlr_preshear,x,e,magnify), hlr_guess,
                                     fprime=lambda x: hlr_diff_derivative(hlr_preshear,x,e,magnify))
-        # res = minimize(hlr_absdiff, hlr_init, args=(hlr_preshear, e, magnify), method='Nelder-Mead', tol=1e-18)
-        return res #res.x[0]
+        return res
+    elif method=='Nelder-Mead':
+        res = minimize(hlr_absdiff, hlr_guess, args=(hlr_preshear, e, magnify), method='Nelder-Mead', tol=1e-18)
+        return res.x[0]
+    else:
+        raise RuntimeError('Invalid method')
 
 def get_hlr_postshear_fast(hlr_preshear, e, hsm=HLRShearModel(), magnify=False):
     ''' vectorized and efficient based on pre-computed interpolated data '''
-    if isinstance(e, (int, float)) and e==0:
-        return hlr_preshear
-    else:
-        return hsm.get_hlr_preshear(hlr_preshear, e, magnify)
+    return hsm.get_hlr_postshear(hlr_preshear, e, magnify)
 
 def calc_moment_radius(Q, method='det'):
     # assumes symmetric Q and doesn't check for it
@@ -441,4 +440,3 @@ def hlr_from_moments_fast(Q, hsm=HLRShearModel(), return_shape=False):
         return hlr_interp, e1, e2
     else:
         return hlr_interp
-
