@@ -137,6 +137,10 @@ def sersic_second_moments(hlr,e1=None,e2=None,n=0.5,q=None,beta=None,magnify=Tru
     
     if out_unit.startswith('deg'):
         Q /= 3600**2 # now in degrees
+    elif out_unit == 'arcsec':
+        pass
+    else:
+        raise RuntimeError('Invalid `out_unit`')
 
     return Q
     
@@ -162,6 +166,10 @@ def gaussian_second_moments(galhlr,e1,e2,magnify=True,out_unit='arcsec'): # just
     
     if out_unit.startswith('deg'):
         sigma_round /= 3600 # now in degrees
+    elif out_unit == 'arcsec':
+        pass
+    else:
+        raise RuntimeError('Invalid `out_unit`')
 
     # a and b are deviations from a circle of radius r=sigma_round
     if magnify: # equivalent of galsim.lens()
@@ -440,3 +448,40 @@ def hlr_from_moments_fast(Q, hsm=HLRShearModel(), return_shape=False):
         return hlr_interp, e1, e2
     else:
         return hlr_interp
+
+def convolve_with_PSF(e1,e2,hlr,PSF_FWHM=0,hsm=HLRShearModel(),mode='convolve',return_T2Tpsf=False,illegal_moments_flag=-11): # correct version!
+    nobj = len(hlr)
+    hlr_psf = PSF_FWHM/2 # only true for Gaussians
+    Q = get_shape_covmat_fast(hlr,e1,e2,out_unit='arcsec')    # for the galaxy
+    P = get_shape_covmat_fast(hlr_psf,0,0,out_unit='arcsec')  # for the PSF -- 0, 0 -> circular       
+    if mode=='convolve':
+        Q+=P
+    elif mode=='deconvolve':
+        Q-=P
+    else:
+        raise RuntimeError('Invalid mode')
+    if return_T2Tpsf: # T of output (convolved/deconvolved) to T of PSF
+        T2Tpsf = get_T_from_Q(Q)/get_T_from_Q(P)
+    bm = np.linalg.det(Q)<0 # bad_moments
+    nbm = sum(bm)
+    if nbm>0: # it never happened for convolution
+        print(f"Unable to run the code in the `{mode}` mode for {nbm} galaxies ({100*nbm/nobj:.2f}%) -- but don't worry we will flag their (e1, e2, hlr) as {illegal_moments_flag}")
+
+    ok = ~bm
+    hlr_new, e1_new, e2_new = np.zeros_like(hlr), np.zeros_like(hlr), np.zeros_like(hlr)
+    hlr_new[bm] = e1_new[bm] = e2_new[bm] = illegal_moments_flag
+    hlr_new[ok],  e1_new[ok],  e2_new[ok] = hlr_from_moments_fast(Q[ok],hsm=hsm,return_shape=True)
+    
+    if return_T2Tpsf:
+        return e1_new, e2_new, hlr_new, T2Tpsf
+    else:
+        return e1_new, e2_new, hlr_new
+
+def get_T_from_Q(Q):
+    T = Q.trace(axis1=-2, axis2=-1)
+    return T
+
+def get_T(e1,e2,hlr):
+    Q = get_shape_covmat_fast(hlr,e1,e2,out_unit='arcsec')
+    T = get_T_from_Q(Q)
+    return T
