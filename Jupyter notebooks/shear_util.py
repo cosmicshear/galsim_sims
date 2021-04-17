@@ -465,7 +465,7 @@ def convolve_with_PSF(e1,e2,hlr,PSF_FWHM=0,hsm=HLRShearModel(),mode='convolve',r
     bm = np.linalg.det(Q)<0 # bad_moments
     nbm = sum(bm)
     if nbm>0: # it never happened for convolution
-        print(f"Unable to run the code in the `{mode}` mode for {nbm} galaxies ({100*nbm/nobj:.2f}%) -- but don't worry we will flag their (e1, e2, hlr) as {illegal_moments_flag}")
+        print(f"Unable to run the code in the `{mode}` mode for {nbm} galaxies ({100*nbm/nobj:.2f}%) due to the negative determinant of the moments matrix -- but don't worry we will flag their (e1, e2, hlr) as {illegal_moments_flag}")
 
     ok = ~bm
     hlr_new, e1_new, e2_new = np.zeros_like(hlr), np.zeros_like(hlr), np.zeros_like(hlr)
