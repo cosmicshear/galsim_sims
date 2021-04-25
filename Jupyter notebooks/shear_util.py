@@ -8,6 +8,7 @@ from galsim import _galsim
 import pandas as pd
 from scipy.interpolate import interp1d
 # from mpmath import gammainc
+import galsim
 
 absdir = os.path.dirname(os.path.abspath(__file__))
 
@@ -62,7 +63,7 @@ class HLRShearModel:
         hlr_postshear = hlr_preshear * scale
         return hlr_postshear
 
-# [for testing] taken from https://github.com/LSSTDESC/WeakLensingDeblending/blob/master/descwl/model.py#L48
+# [also good for testing] taken from https://github.com/LSSTDESC/WeakLensingDeblending/blob/master/descwl/model.py#L48
 def moments_size_and_shape(Q):
     """Calculate size and shape parameters from a second-moment tensor.
     If the input is an array of second-moment tensors, the calculation is vectorized
@@ -89,6 +90,9 @@ def moments_size_and_shape(Q):
     e1 = asymQx/e_denom
     e2 = asymQy/e_denom
     return sigma_m,sigma_p,a,b,beta,e1,e2 
+
+def is_symmetric(matrix, rtol=1e-15, atol=1e-18):
+    return np.allclose(matrix, matrix.T, rtol=rtol, atol=atol)
 
 # modified from https://github.com/LSSTDESC/WeakLensingDeblending/blob/master/descwl/model.py#L14
 def sersic_second_moments(hlr,e1=None,e2=None,n=0.5,q=None,beta=None,magnify=True,out_unit='arcsec'): # just to generate training data for the shear model
@@ -128,7 +132,7 @@ def sersic_second_moments(hlr,e1=None,e2=None,n=0.5,q=None,beta=None,magnify=Tru
     Q12 = 2*e2
     
     Q = np.array(((Q11,Q12),(Q12,Q22)))*cn*hlr**2
-    
+
     if magnify:
         # mu = 1/(1-e_mag_sq)
         Q /= (1-e_mag_sq)**2
@@ -142,8 +146,13 @@ def sersic_second_moments(hlr,e1=None,e2=None,n=0.5,q=None,beta=None,magnify=Tru
     else:
         raise RuntimeError('Invalid `out_unit`')
 
+    Q = Q.T # needed if there are multiple covariances -- it provides access to each covariance through the first axis! Q[0], Q[1], ...
+
+    if not is_symmetric(Q[0] if len(Q)>1 else Q): # just check one of them
+        raise RuntimeError('Something went wrong! Non-symmetric second moments matrix.')
+
     return Q
-    
+
 def gaussian_second_moments(galhlr,e1,e2,magnify=True,out_unit='arcsec'): # just to generate training data for the shear model
     """
     Returns the covariance matrix of the lensing shears given the two components
@@ -192,6 +201,10 @@ def gaussian_second_moments(galhlr,e1,e2,magnify=True,out_unit='arcsec'): # just
         R = [np.array([[np.cos(theta[k]),-np.sin(theta[k])],[np.sin(theta[k]),np.cos(theta[k])]]) for k in range(N)]
         Sigma_0 = [np.array([[a[k]**2,0],[0,b[k]**2]]) for k in range(N)]
         Sigma   = [np.dot(R[k],np.dot(Sigma_0[k],R[k].T)) for k in range(N)]
+        
+        if not is_symmetric(Sigma[0]): # just check one of them
+            raise RuntimeError('Something went wrong! Non-symmetric second moments matrix.')
+
     return np.array(Sigma)
 
 def I(x,a): # watch the order! # just to generate training data for the shear model
@@ -227,6 +240,12 @@ def get_shape_covmat_fast(hlr_postshear,e1,e2,hsm=HLRShearModel(),out_unit='arcs
     '''
     # assumes hlr_postshear in arcsec
     magnify = False # magnify=True or False doesn't change the outcome it just needs to be consistent throughout this function
+    if not isinstance(e1, (int, float)):
+        e1 = np.asarray(e1)
+    if not isinstance(e2, (int, float)):
+        e2 = np.asarray(e2)
+    if not isinstance(hlr_postshear, (int, float)):
+        hlr_postshear = np.asarray(hlr_postshear)
     e = np.sqrt(e1**2+e2**2)
     hlr_preshear = hsm.get_hlr_preshear(hlr_postshear, e, magnify=magnify)
     Q = gaussian_second_moments(hlr_preshear,e1,e2,magnify=magnify,out_unit=out_unit) # both gaussian_second_moments and sersic_second_moment with n=0.5 work
@@ -378,6 +397,7 @@ def get_hlr_postshear_fast(hlr_preshear, e, hsm=HLRShearModel(), magnify=False):
 def calc_moment_radius(Q, method='det'):
     # assumes symmetric Q and doesn't check for it
     if method=='det':
+        #print('Q',Q)
         sigma_round = np.linalg.det(Q)**0.25
     elif method=='trace':
         trace = np.trace(Q, axis1=-2, axis2=-1)
@@ -439,8 +459,8 @@ def hlr_from_moments_fast(Q, hsm=HLRShearModel(), return_shape=False):
     # recommended over `hlr_from_moments()`
     # assumes gaussian profiles
     # assumes symmetric Q and doesn't check for it
-    Q = np.asarray(Q)
-    sigma_round = calc_moment_radius(Q)
+    Q = np.asarray(Q).T
+    sigma_round = calc_moment_radius(Q, method='det') # the determinant is invariant under shear
     hlr_round = sigma_round*np.sqrt(np.log(4))
     e1, e2, e = shape_from_moments(Q)
     hlr_interp = hsm.get_hlr_postshear(hlr_round,e,magnify=False)
@@ -485,3 +505,138 @@ def get_T(e1,e2,hlr):
     Q = get_shape_covmat_fast(hlr,e1,e2,out_unit='arcsec')
     T = get_T_from_Q(Q)
     return T
+
+def Qij_points_sys(i,j,A,mu,c,unit='pixel'): # should not be used in the blending emulation; just for comparison
+    """
+    Returns second moments assuming point sources
+    
+    [assuming N galaxies in the blended system]
+
+    A     :: the array of total NORMALIZED fluxes
+    mu    :: the array (N vectors) of galaxy centers (i.e. the peaks of the Gaussians)
+    c     :: the vector pointing to the luminosity center of the blended system
+    """
+
+    if unit=='celestial':
+        delta = np.radians(c[1]) # central declination in radians
+        cosd = np.cos(delta)
+        cf = cosd if i!=j else cosd**2 if i==j==1 else 1.0        
+        # now you can switch to arcsec since we always make `Sigma` with hlr in arcsec
+        mu *= 3600
+        c  *= 3600
+    elif unit.startswith('pix'):
+        cf = 1
+    else:
+        raise RuntimeError('Invalid unit')
+        
+    i,j = i-1, j-1
+    Qij = np.sum( A*((mu[i]-c[i])*(mu[j]-c[j])*cf), axis=0 )
+
+    return Qij/np.sum(A, axis=0)
+
+def Qij_sys(i,j,A,mu,c,Sigma,unit='pixel'):
+    """
+    Returns second moments assuming extended gaussian profiles
+
+    [assuming N galaxies in the blended system]
+
+    A     :: the array of total NORMALIZED fluxes
+    mu    :: the array (N vectors) of galaxy centers (i.e. the peaks of the Gaussians) (degrees)
+    c     :: the vector pointing to the luminosity center of the blended system (degrees)
+    Sigma :: the array of N covariance matrices (2 by 2) (elements have the unit of arcsec^2)
+    individual :: True if we are interested in second moments of individual galaxies (non-blends), False sums over everything (good for blending)
+    """
+
+    mu = np.asarray(mu)
+    c = np.asarray(c)
+    
+    if unit=='celestial':
+        delta = np.radians(c[1]) # central declination in radians
+        cosd = np.cos(delta)
+        cf = cosd if i!=j else cosd**2 if i==j==1 else 1.0
+        # now you can switch to arcsec since we always make `Sigma` with hlr in arcsec
+        mu *= 3600
+        c  *= 3600
+    elif unit.startswith('pix'):
+        cf = 1
+    else:
+        raise RuntimeError('Invalid unit')
+    
+    i,j = i-1, j-1
+    Qij = np.sum( A*(Sigma[...,i,j]+(mu[i]-c[i])*(mu[j]-c[j])*cf), axis=0 )
+
+    return Qij/np.sum(A, axis=0)
+
+def get_blend_moments(A,mu,c,Sigma,unit='pixel'):
+    # compute the second moments of the blend "system" (collectively)
+    Q11 = Qij_sys(1,1,A,mu,c,Sigma,unit=unit)
+    Q12 = Qij_sys(1,2,A,mu,c,Sigma,unit=unit)
+    Q22 = Qij_sys(2,2,A,mu,c,Sigma,unit=unit)
+    return np.array(((Q11,Q12),(Q12,Q22))).T
+
+def galsim_world2pix(wcs_,ra_list, dec_list):
+    npos = len(ra_list)
+    px = np.zeros(npos)
+    py = np.zeros(npos)
+    for j in range(npos):
+        radecpos = galsim.CelestialCoord(ra=ra_list[j]*galsim.degrees,dec=dec_list[j]*galsim.degrees)
+        xypos = wcs_.toImage(radecpos)
+        px[j] = xypos.x
+        py[j] = xypos.y
+    return px, py
+
+def get_blend_shape(mu,c,e1,e2,hlr,flux,hsm=HLRShearModel(),wcs=None,pixel_scale=None,return_hlr=False,return_moments=False,out_unit='pixel'):
+    """        
+    Returns the combined shear of the blended system
+    
+    Not quite ready for multiple blended systems! TODO!
+
+    [assuming N galaxies in the blended system]
+
+    #A  : the array of total NORMALIZED fluxes
+    mu : the array (N vectors) of galaxy centers (i.e. the peaks of the Gaussians)
+    c  : the vector pointing to the luminosity center of the blended system
+    e1 : the array of the first component of the shears for N galaxies 
+    e2 : the array of the second component of the shears for N galaxies
+    flux : the flux of galaxies in the blend (in whatever unit or zeropoint but consistent) 
+    hlr in arcsec and mu,c in degrees.
+    returns Q_blend in pixel^2, hlr_blend in arcsec
+    """
+
+    if wcs is None:
+        cen_ra  = 0.5 * (mu[0].max() + mu[0].min()) * galsim.degrees
+        cen_dec = 0.5 * (mu[1].max() + mu[1].min()) * galsim.degrees
+        cen_coord = galsim.CelestialCoord(cen_ra, cen_dec) #, gsparams=gsp)
+        affine_wcs = galsim.PixelScale(pixel_scale).affine().withOrigin(galsim.PositionI(0,0))
+        wcs = galsim.TanWCS(affine_wcs, world_origin=cen_coord) #, gsparams=gsp)
+
+    mu = galsim_world2pix(wcs,mu[0],mu[1])
+    c = galsim_world2pix(wcs,[c[0]],[c[1]]) # assumes scalar c[0], c[1]
+    
+    Sigma = get_shape_covmat_fast(hlr/pixel_scale, e1, e2, hsm=hsm) # an array filled with second moments tensors of the blend members
+    A = flux/( 2*np.pi*np.linalg.det(Sigma)**0.5 )
+
+    # compute the second moments of the blend "system" (collectively)
+    Q_blend = get_blend_moments(A,mu,c,Sigma,unit='pixel')
+    hlr_blend, e1_blend, e2_blend = hlr_from_moments_fast(Q_blend, hsm=hsm, return_shape=True)
+
+    to_return = [e1_blend, e2_blend]
+    
+    if out_unit.startswith('deg'):
+        convertor = pixel_scale * 3600
+    elif out_unit.startswith('arcmin'):
+        convertor = pixel_scale * 60
+    elif out_unit.startswith('arcsec'):
+        convertor = pixel_scale
+    elif out_unit.startswith('pix'):
+        convertor = 1.0
+    else:
+        raise RuntimeError('Invalid `out_unit`')
+        
+    if return_hlr:
+        to_return += [hlr_blend*convertor]
+    
+    if return_moments:
+        to_return += [Q_blend*convertor**2]
+    
+    return to_return
